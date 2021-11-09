@@ -31,23 +31,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
     constructor() {}
 
     /// insolvent when contribution amount < 0
-    enum ProposalStatus {
-        Active,
-        Pass,
-        Insolvent
-    }
-
-    struct ProposalData {
-        uint256 proposalId;
-        address app;
-        ISuperHookableToken governToken;
-        uint256 lastTimeStamp;
-        uint256 lastConviction;
-        uint256 amount; //scaled token amount
-        int256 flowRate; //scaled, per step instead of second
-        ProposalStatus status;
-        ProposalParam param;
-    }
 
     struct UserTokenVoteData {
         address user;
@@ -61,11 +44,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
     struct ProposalIndex {
         ProposalData[] proposals;
         mapping(address => UserTokenVoteData) userData;
-    }
-
-    struct AppProposalId {
-        address app;
-        uint256 proposalId;
     }
 
     event ProposalCreated(
@@ -84,26 +62,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
     mapping(address => mapping(ISuperHookableToken => ProposalIndex)) _appTokenProposalIndex;
     mapping(address => mapping(ISuperHookableToken => AppProposalId[])) _userTokenProposalIndex;
 
-    // app, token => [ proposals], [ users]
-    // user, token => [ app] => [proposals]
-
-    /// @dev ISuperAgreement.realtimeBalanceOf implementation
-    function realtimeBalanceOf(
-        ISuperfluidToken token,
-        address account,
-        uint256 /* time */
-    )
-        external
-        view
-        override
-        returns (
-            int256 dynamicBalance,
-            uint256 deposit,
-            uint256 owedDeposit
-        )
-    {
-        return (0, 0, 0);
-    }
+    ///============ Conviction Agreement Interface functions ================
 
     function createProposal(
         ISuperHookableToken token,
@@ -136,7 +95,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         newCtx = ctx;
     }
 
-    // onlyActiveProposal(app, token, proposalId)
     function vote(
         ISuperHookableToken token,
         address app,
@@ -188,7 +146,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         newCtx = ctx;
     }
 
-    function refresh(
+    function updateProposalConvictionAndStatus(
         ISuperHookableToken token,
         address app,
         uint256 proposalId,
@@ -221,6 +179,59 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
             ];
     }
 
+    function getUserVoteAmount(
+        ISuperHookableToken token,
+        address app,
+        uint256 proposalId,
+        address user
+    ) public view override returns (uint256) {
+        return
+            _appTokenProposalIndex[app][token].userData[user].votingAmount[
+                proposalId
+            ];
+    }
+
+    function getUserVoteFlow(
+        ISuperHookableToken token,
+        address app,
+        uint256 proposalId,
+        address user
+    ) public view override returns (int256) {
+        return
+            _appTokenProposalIndex[app][token].userData[user].votingFlowRate[
+                proposalId
+            ];
+    }
+
+    function getVotingProposalsByAppUser(
+        ISuperHookableToken token,
+        address app,
+        address user
+    ) public view override returns (uint256[] memory) {
+        uint256[] storage source = _appTokenProposalIndex[app][token]
+            .userData[user]
+            .votingProposals;
+        uint256[] memory result = new uint256[](source.length);
+        for (uint256 i = 0; i < source.length; i++) {
+            result[i] = source[i];
+        }
+        return result;
+    }
+
+    function getVotingProposalsByUser(ISuperHookableToken token, address user)
+        public
+        view
+        override
+        returns (AppProposalId[] memory)
+    {
+        AppProposalId[] storage source = _userTokenProposalIndex[user][token];
+        AppProposalId[] memory result = new AppProposalId[](source.length);
+        for (uint256 i = 0; i < source.length; i++) {
+            result[i] = source[i];
+        }
+        return result;
+    }
+
     function getProposalLastConviction(
         ISuperHookableToken token,
         address app,
@@ -231,6 +242,223 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
             _appTokenProposalIndex[app][token]
                 .proposals[proposalId]
                 .lastConviction;
+    }
+
+    function getProposal(
+        ISuperHookableToken token,
+        address app,
+        uint256 proposalId
+    ) public view override returns (ProposalData memory) {
+        return _appTokenProposalIndex[app][token].proposals[proposalId];
+    }
+
+    /// @dev ISuperAgreement.realtimeBalanceOf implementation
+    function realtimeBalanceOf(
+        ISuperfluidToken token,
+        address account,
+        uint256 /* time */
+    )
+        external
+        view
+        override
+        returns (
+            int256 dynamicBalance,
+            uint256 deposit,
+            uint256 owedDeposit
+        )
+    {
+        return (0, 0, 0);
+    }
+
+    function calculateConviction(
+        uint256 numStep,
+        uint256 initConviction,
+        uint256 amount,
+        int256 flowRate,
+        uint256 alpha
+    ) public view override returns (uint256) {
+        // Y = a^x y_0 + (1-a^x)/(1-a) x_0 + \beta *(x * (1-a^x)/(1-a) - (a - a^x)/(1-a)^2 + (x-1)/(1-a)*a^x), x = time
+        // A = a^t * y_0
+        // Conviction_D = A  + B x + C * flowrate
+        //(1- a**x)
+
+        require(numStep >= 1, "Numstep needs to >= 1");
+
+        uint256 alphaF128 = mathUtils.convertToFixedPoint128(
+            alpha,
+            DECIMAL_MULTIPLIER
+        );
+        uint256 alphaPowerStepF128 = mathUtils.fixedFractionalPow(
+            alphaF128,
+            numStep
+        );
+        uint256 oneMinusAlphaF128 = 0;
+        uint256 oneMinusAlphaPowerStepF128 = 0;
+
+        {
+            uint256 oneF128 = mathUtils.convertToFixedPoint128(1, 1);
+            oneMinusAlphaF128 = oneF128.sub(alphaF128);
+            oneMinusAlphaPowerStepF128 = oneF128.sub(alphaPowerStepF128);
+        }
+        uint256 result = mathUtils
+            .convertFixedPoint128To(alphaPowerStepF128, DECIMAL_MULTIPLIER)
+            .mul(initConviction)
+            .div(DECIMAL_MULTIPLIER);
+        uint256 C_D;
+        {
+            uint256 BCoff_D = oneMinusAlphaPowerStepF128
+                .mul(DECIMAL_MULTIPLIER)
+                .div(oneMinusAlphaF128);
+
+            C_D = BCoff_D.mul(numStep);
+            result = result.add(amount.mul(BCoff_D).div(DECIMAL_MULTIPLIER));
+
+            console.log("No Flow Result", result);
+        }
+        // console.log("C_D1", C_D);
+
+        C_D = C_D.add(
+            alphaPowerStepF128
+                .mul(DECIMAL_MULTIPLIER)
+                .div(oneMinusAlphaF128)
+                .mul(numStep - 1)
+        );
+        // console.log("C_D2", C_D);
+
+        C_D = C_D.sub(
+            alphaF128.sub(alphaPowerStepF128).mul(DECIMAL_MULTIPLIER).div(
+                mathUtils.fixedFractionalPow(oneMinusAlphaF128, 2)
+            )
+        );
+        // console.log("C_D3", C_D);
+
+        if (flowRate > 0) {
+            C_D = uint256(flowRate).mul(C_D).div(DECIMAL_MULTIPLIER);
+            return result.add(C_D);
+        } else if (flowRate < 0) {
+            C_D = uint256(-flowRate).mul(C_D).div(DECIMAL_MULTIPLIER);
+            if (C_D > result) {
+                //Negative due to insolvent debt. Cap it to 0 now.
+                return 0;
+            }
+            return result.sub(C_D);
+        } else {
+            return result;
+        }
+    }
+
+    ///========================================
+
+    function getNumStep(
+        uint256 lastTimeStamp,
+        uint256 currentTimeStamp,
+        uint256 numPerUpdate
+    ) public pure returns (uint256) {
+        return (currentTimeStamp - lastTimeStamp).div(numPerUpdate);
+    }
+
+    function checkInsolvent(
+        uint256 numStep,
+        uint256 amount,
+        int256 flowRate
+    ) public returns (bool) {
+        if (flowRate < 0) {
+            uint256 delta = uint256(-flowRate).mul(numStep);
+            if (delta > amount) {
+                //insolvent
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    ///@dev assume solvent
+    function getMaxConvictionStep(
+        uint256 initConviction,
+        uint256 amount,
+        int256 flowRate,
+        uint256 alpha
+    ) public view returns (int256) {
+        // max/min = 1/ln(a) * ln(((a-1) * \beta)/((a^2 - 2 a + 1) ln(a) y_0 + (a-1) ln(a) x + a\beta ln(a)
+
+        uint256 oneMinusA_D = DECIMAL_MULTIPLIER.sub(alpha);
+
+        uint256 A_128 = mathUtils.convertToFixedPoint128(
+            alpha,
+            DECIMAL_MULTIPLIER
+        );
+
+        uint256 oneMinusAPower2_D = mathUtils.convertFixedPoint128To(
+            mathUtils.fixedFractionalPow(
+                mathUtils.convertToFixedPoint128(
+                    oneMinusA_D,
+                    DECIMAL_MULTIPLIER
+                ),
+                2
+            ),
+            DECIMAL_MULTIPLIER
+        );
+
+        int256 delt2ndDerivative_D;
+        {
+            int256 initConvEff_D = int256(
+                oneMinusAPower2_D.mul(initConviction).div(DECIMAL_MULTIPLIER)
+            );
+
+            int256 amountEff_D = -int256(
+                amount.mul(oneMinusA_D).div(DECIMAL_MULTIPLIER)
+            );
+
+            int256 flowEff_D = flowRate.mul(int256(alpha)).div(
+                int256(DECIMAL_MULTIPLIER)
+            );
+            delt2ndDerivative_D = initConvEff_D + amountEff_D + flowEff_D;
+        }
+        // (alpha - 1) ** 2 *  y_0 + (a-1) x_0  + a (flowRate)
+        if (delt2ndDerivative_D > 0) {
+            return -1;
+        }
+
+        // max/min = 1/ln(a) * ln(((a-1) * \beta)/((a^2 - 2 a + 1) ln(a) y_0 + (a-1) ln(a) x + a\beta ln(a)
+
+        {
+            int256 ln_a_D = mathUtils.convertSignedFixedPoint128To(
+                mathUtils.ln(A_128),
+                DECIMAL_MULTIPLIER
+            );
+            int256 nom_D = (-int256(oneMinusA_D)).mul(flowRate).div(
+                int256(DECIMAL_MULTIPLIER)
+            ); //must be non negative, alpha<1, flowRate <=0
+
+            int256 denom_D = ln_a_D.mul(delt2ndDerivative_D).div(
+                int256(DECIMAL_MULTIPLIER)
+            );
+
+            int256 content = nom_D.mul(int256(DECIMAL_MULTIPLIER)).div(denom_D);
+            if (content <= 0) {
+                return -1;
+            }
+
+            int256 maxStep_D = mathUtils
+                .convertSignedFixedPoint128To(
+                    mathUtils.ln(
+                        mathUtils.convertToFixedPoint128(
+                            uint256(content),
+                            DECIMAL_MULTIPLIER
+                        )
+                    ),
+                    DECIMAL_MULTIPLIER
+                )
+                .mul(int256(DECIMAL_MULTIPLIER))
+                .div(ln_a_D);
+
+            if (maxStep_D < 0) {
+                return -1;
+            }
+
+            return maxStep_D;
+        }
     }
 
     /// @dev Only update conviction but not the state because do not have the context to trigger SuperApp Callback.
@@ -258,8 +486,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
 
         return currentContext.msgSender;
     }
-
-    ///========================================
 
     function _updateRelatedConvictionStates(
         ISuperHookableToken token,
@@ -360,59 +586,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         userTokenData.totalVotedPercentage = newTotalVotedPercentage;
     }
 
-    // function _votePercentageWithCall(
-    //     ISuperHookableToken token,
-    //     address app,
-    //     UserTokenVoteData storage userTokenData,
-    //     ProposalData storage targetProposal,
-    //     uint256 targetPercentage,
-    //     bytes calldata ctx
-    // ) internal {
-    //     _callBeforeAgreementUpdated(
-    //         token,
-    //         app,
-    //         targetProposal.proposalId,
-    //         AGREEMENT_UPDATE_VOTING,
-    //         ctx
-    //     );
-
-    //     _votePercentage(
-    //         userTokenData.user,
-    //         targetProposal,
-    //         targetPercentage,
-    //         userTokenData
-    //     );
-
-    //     _callAfterAgreementUpdated(
-    //         token,
-    //         app,
-    //         targetProposal.proposalId,
-    //         AGREEMENT_UPDATE_VOTING,
-    //         ctx
-    //     );
-    // }
-
-    // function _refreshUserVoteWithCall(
-    //     ISuperHookableToken token,
-    //     address app,
-    //     address user,
-    //     ProposalData storage targetProposal,
-    //     bytes calldata ctx
-    // ) internal {
-    //     UserTokenVoteData storage userTokenData = _appTokenProposalIndex[app][
-    //         token
-    //     ].userData[user];
-
-    //     _votePercentageWithCall(
-    //         token,
-    //         app,
-    //         userTokenData,
-    //         targetProposal,
-    //         userTokenData.votingPercentage[targetProposal.proposalId],
-    //         ctx
-    //     );
-    // }
-
     function _votePercentage(
         address user,
         ProposalData storage targetProposal,
@@ -483,7 +656,8 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
 
             int256 userFlowRate = int256(flowRate)
                 .mul(int256(DECIMAL_MULTIPLIER))
-                .div(int256(targetProposal.param.tokenScalingFactor));
+                .div(int256(targetProposal.param.tokenScalingFactor))
+                .mul(int256(targetProposal.param.numSecondPerStep));
 
             targetProposal.flowRate = targetProposal
                 .flowRate
@@ -659,118 +833,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         }
     }
 
-    function getNumStep(
-        uint256 lastTimeStamp,
-        uint256 currentTimeStamp,
-        uint256 numPerUpdate
-    ) public pure returns (uint256) {
-        return (currentTimeStamp - lastTimeStamp).div(numPerUpdate);
-    }
-
-    function checkInsolvent(
-        uint256 numStep,
-        uint256 amount,
-        int256 flowRate
-    ) public returns (bool) {
-        if (flowRate < 0) {
-            uint256 delta = uint256(-flowRate).mul(numStep);
-            if (delta > amount) {
-                //insolvent
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    ///@dev assume solvent
-    function getMaxConvictionStep(
-        uint256 initConviction,
-        uint256 amount,
-        int256 flowRate,
-        uint256 alpha
-    ) public view returns (int256) {
-        // max/min = 1/ln(a) * ln(((a-1) * \beta)/((a^2 - 2 a + 1) ln(a) y_0 + (a-1) ln(a) x + a\beta ln(a)
-
-        uint256 oneMinusA_D = DECIMAL_MULTIPLIER.sub(alpha);
-
-        uint256 A_128 = mathUtils.convertToFixedPoint128(
-            alpha,
-            DECIMAL_MULTIPLIER
-        );
-
-        uint256 oneMinusAPower2_D = mathUtils.convertFixedPoint128To(
-            mathUtils.fixedFractionalPow(
-                mathUtils.convertToFixedPoint128(
-                    oneMinusA_D,
-                    DECIMAL_MULTIPLIER
-                ),
-                2
-            ),
-            DECIMAL_MULTIPLIER
-        );
-
-        int256 delt2ndDerivative_D;
-        {
-            int256 initConvEff_D = int256(
-                oneMinusAPower2_D.mul(initConviction).div(DECIMAL_MULTIPLIER)
-            );
-
-            int256 amountEff_D = -int256(
-                amount.mul(oneMinusA_D).div(DECIMAL_MULTIPLIER)
-            );
-
-            int256 flowEff_D = flowRate.mul(int256(alpha)).div(
-                int256(DECIMAL_MULTIPLIER)
-            );
-            delt2ndDerivative_D = initConvEff_D + amountEff_D + flowEff_D;
-        }
-        // (alpha - 1) ** 2 *  y_0 + (a-1) x_0  + a (flowRate)
-        if (delt2ndDerivative_D > 0) {
-            return -1;
-        }
-
-        // max/min = 1/ln(a) * ln(((a-1) * \beta)/((a^2 - 2 a + 1) ln(a) y_0 + (a-1) ln(a) x + a\beta ln(a)
-
-        {
-            int256 ln_a_D = mathUtils.convertSignedFixedPoint128To(
-                mathUtils.ln(A_128),
-                DECIMAL_MULTIPLIER
-            );
-            int256 nom_D = (-int256(oneMinusA_D)).mul(flowRate).div(
-                int256(DECIMAL_MULTIPLIER)
-            ); //must be non negative, alpha<1, flowRate <=0
-
-            int256 denom_D = ln_a_D.mul(delt2ndDerivative_D).div(
-                int256(DECIMAL_MULTIPLIER)
-            );
-
-            int256 content = nom_D.mul(int256(DECIMAL_MULTIPLIER)).div(denom_D);
-            if (content <= 0) {
-                return -1;
-            }
-
-            int256 maxStep_D = mathUtils
-                .convertSignedFixedPoint128To(
-                    mathUtils.ln(
-                        mathUtils.convertToFixedPoint128(
-                            uint256(content),
-                            DECIMAL_MULTIPLIER
-                        )
-                    ),
-                    DECIMAL_MULTIPLIER
-                )
-                .mul(int256(DECIMAL_MULTIPLIER))
-                .div(ln_a_D);
-
-            if (maxStep_D < 0) {
-                return -1;
-            }
-
-            return maxStep_D;
-        }
-    }
-
     function _getLatestConviction(ProposalData storage p)
         internal
         returns (uint256)
@@ -778,76 +840,24 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         return 0;
     }
 
-    function calculateConviction(
-        uint256 numStep,
-        uint256 initConviction,
-        uint256 amount,
-        int256 flowRate,
-        uint256 alpha
-    ) public view override returns (uint256) {
-        // Y = a^x y_0 + (1-a^x)/(1-a) x_0 + \beta *(x * (1-a^x)/(1-a) - (a - a^x)/(1-a)^2 + (x-1)/(1-a)*a^x), x = time
-        // A = a^t * y_0
-        // Conviction_D = A  + B x + C * flowrate
-        //(1- a**x)
+    function _generateDataId(address app, uint256 proposalId)
+        private
+        pure
+        returns (bytes32 id)
+    {
+        return keccak256(abi.encode(app, proposalId));
+    }
 
-        require(numStep >= 1, "Numstep needs to >= 1");
+    function encodeAgreementData(uint256 proposalId)
+        public
+        pure
+        returns (bytes32[] memory)
+    {
+        bytes32[] memory data = new bytes32[](1);
 
-        uint256 alphaF128 = mathUtils.convertToFixedPoint128(
-            alpha,
-            DECIMAL_MULTIPLIER
-        );
-        uint256 alphaPowerStepF128 = mathUtils.fixedFractionalPow(
-            alphaF128,
-            numStep
-        );
-        uint256 oneMinusAlphaF128 = 0;
-        uint256 oneMinusAlphaPowerStepF128 = 0;
+        data[0] = bytes32(proposalId);
 
-        {
-            uint256 oneF128 = mathUtils.convertToFixedPoint128(1, 1);
-            oneMinusAlphaF128 = oneF128.sub(alphaF128);
-            oneMinusAlphaPowerStepF128 = oneF128.sub(alphaPowerStepF128);
-        }
-        uint256 result = mathUtils
-            .convertFixedPoint128To(alphaPowerStepF128, DECIMAL_MULTIPLIER)
-            .mul(initConviction)
-            .div(DECIMAL_MULTIPLIER);
-        uint256 C_D;
-        {
-            uint256 BCoff_D = oneMinusAlphaPowerStepF128
-                .mul(DECIMAL_MULTIPLIER)
-                .div(oneMinusAlphaF128);
-
-            C_D = BCoff_D.mul(numStep);
-            result = result.add(amount.mul(BCoff_D).div(DECIMAL_MULTIPLIER));
-        }
-
-        C_D = C_D.add(
-            alphaPowerStepF128
-                .mul(DECIMAL_MULTIPLIER)
-                .div(oneMinusAlphaF128)
-                .mul(numStep - 1)
-        );
-
-        C_D = C_D.sub(
-            alphaF128.sub(alphaPowerStepF128).mul(DECIMAL_MULTIPLIER).div(
-                mathUtils.fixedFractionalPow(oneMinusAlphaF128, 2)
-            )
-        );
-
-        if (flowRate > 0) {
-            C_D = uint256(flowRate).mul(C_D).div(DECIMAL_MULTIPLIER);
-            return result.add(C_D);
-        } else if (flowRate < 0) {
-            C_D = uint256(-flowRate).mul(C_D).div(DECIMAL_MULTIPLIER);
-            if (C_D > result) {
-                //Negative due to insolvent debt. Cap it to 0 now.
-                return 0;
-            }
-            return result.sub(C_D);
-        } else {
-            return result;
-        }
+        return data;
     }
 
     //============ Array =============
@@ -946,27 +956,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         return false;
     }
 
-    function _generateDataId(address app, uint256 proposalId)
-        private
-        pure
-        returns (bytes32 id)
-    {
-        return keccak256(abi.encode(app, proposalId));
-    }
-
-    function encodeAgreementData(uint256 proposalId)
-        public
-        pure
-        returns (bytes32[] memory)
-    {
-        bytes32[] memory data = new bytes32[](1);
-
-        data[0] = bytes32(proposalId);
-
-        return data;
-    }
-
-    //------ Agreement-------
+    //===========  Agreement Call ============
     function _callBeforeAgreementCreated(
         ISuperHookableToken token,
         address account,

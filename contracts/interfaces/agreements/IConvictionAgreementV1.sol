@@ -13,6 +13,27 @@ abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
         uint256 numSecondPerStep;
         uint256 tokenScalingFactor;
     }
+    enum ProposalStatus {
+        Active,
+        Pass,
+        Insolvent
+    }
+
+    struct ProposalData {
+        uint256 proposalId;
+        address app;
+        ISuperHookableToken governToken;
+        uint256 lastTimeStamp;
+        uint256 lastConviction;
+        uint256 amount; //scaled token amount
+        int256 flowRate; //scaled, per step instead of second
+        ProposalStatus status;
+        ProposalParam param;
+    }
+    struct AppProposalId {
+        address app;
+        uint256 proposalId;
+    }
 
     /// @dev ISuperAgreement.agreementType implementation
     function agreementType() external view override returns (bytes32) {
@@ -35,7 +56,7 @@ abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
         bytes calldata ctx
     ) external virtual returns (bytes memory newCtx);
 
-    function refresh(
+    function updateProposalConvictionAndStatus(
         ISuperHookableToken token,
         address app,
         uint256 proposalId,
@@ -49,11 +70,43 @@ abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
         address user
     ) public view virtual returns (uint256);
 
+    function getUserVoteAmount(
+        ISuperHookableToken token,
+        address app,
+        uint256 proposalId,
+        address user
+    ) public view virtual returns (uint256);
+
+    function getUserVoteFlow(
+        ISuperHookableToken token,
+        address app,
+        uint256 proposalId,
+        address user
+    ) public view virtual returns (int256);
+
+    function getVotingProposalsByAppUser(
+        ISuperHookableToken token,
+        address app,
+        address user
+    ) public view virtual returns (uint256[] memory);
+
+    function getVotingProposalsByUser(ISuperHookableToken token, address user)
+        public
+        view
+        virtual
+        returns (AppProposalId[] memory);
+
     function getProposalLastConviction(
         ISuperHookableToken token,
         address app,
         uint256 proposalId
     ) public view virtual returns (uint256);
+
+    function getProposal(
+        ISuperHookableToken token,
+        address app,
+        uint256 proposalId
+    ) public view virtual returns (ProposalData memory);
 
     function calculateConviction(
         uint256 numStep,
