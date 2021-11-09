@@ -5,13 +5,14 @@ import { BigNumberish, Contract, Wallet } from "ethers/lib/ethers";
 import { resourceLimits } from "worker_threads";
 import { ConstantFlowAgreementV1, ConvictionAgreementV1, ConvictionApp, SuperAppBase, SuperfluidToken, SuperHookableToken } from "../typechain";
 import internal from "stream";
+import { assert } from "console";
 const deployFramework = require("@superfluid-finance/ethereum-contracts/scripts/deploy-framework.js");
 const deployTestToken = require("@superfluid-finance/ethereum-contracts/scripts/deploy-test-token");
 const deploySuperToken = require("@superfluid-finance/ethereum-contracts/scripts/deploy-super-token");
 
 const SuperfluidSDK = require("@superfluid-finance/js-sdk");
 
-describe("SuperHookableToken", async () => {
+describe("ConvictionAgreementV1", async () => {
   // const [user1, user2, user3] = await ethers.getSigners();
 
   const [user1, user2, user3] = waffle.provider.getWallets();
@@ -31,13 +32,16 @@ describe("SuperHookableToken", async () => {
 
     await expect(superHookableToken.connect(user2).upgrade(10)).to.be.revertedWith("ERC20: transfer amount exceeds balance");
 
-    await testToken.mint(user2.address, ethers.utils.parseEther("2"));
 
+    await testToken.mint(user1.address, ethers.utils.parseEther("1"));
+    await testToken.mint(user2.address, ethers.utils.parseEther("2"));
     await testToken.mint(user3.address, ethers.utils.parseEther("200"));
 
+    await testToken.connect(user1).increaseAllowance(superHookableToken.address, ethers.utils.parseEther("1"));
     await testToken.connect(user2).increaseAllowance(superHookableToken.address, ethers.utils.parseEther("2"));
     await testToken.connect(user3).increaseAllowance(superHookableToken.address, ethers.utils.parseEther("200"));
 
+    await superHookableToken.connect(user1).upgrade(ethers.utils.parseEther("1"));
     await superHookableToken.connect(user2).upgrade(ethers.utils.parseEther("1"));
     await superHookableToken.connect(user3).upgrade(ethers.utils.parseEther("100"));
 
@@ -130,7 +134,7 @@ describe("SuperHookableToken", async () => {
   });
 
 
-  describe("Agreement", async () => {
+  describe("createProposal()", async () => {
     it("can create proposal ", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
@@ -161,8 +165,10 @@ describe("SuperHookableToken", async () => {
       expect(proposalData.param.tokenScalingFactor).to.equal(proposalParam.tokenScalingFactor);
 
     });
+  });
 
-    it("can be voted", async () => {
+  describe("vote()", async () => {
+    it("can vote", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
       await sf.host.callAgreement(agreementProxy.address,
@@ -211,13 +217,32 @@ describe("SuperHookableToken", async () => {
       expect(appProposalIds[0].proposalId).to.equal(0);
     });
 
-
-
-    it("can correctly calculate Conviction with static Amount", async () => {
+    it("mutliple people can vote with static amount and calculate conviction correctly", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
-      await createProposalAndVote(sf, agreementProxy, superHookableToken, convictionApp,
-        proposalParam, D, user2);
+      await sf.host.callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "createProposal",
+          [superHookableToken.address, convictionApp.address, proposalParam, "0x"]
+        ),
+        "0x");
+
+
+      await sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 0, 1 * D, "0x"]
+        ), "0x");
+
+      await sf.host.connect(user3).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 0, 0.5 * D, "0x"]
+        ), "0x");
+
+
+      await ethers.provider.send('evm_increaseTime', [600]);
+      await ethers.provider.send('evm_mine', []);
 
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
@@ -227,17 +252,91 @@ describe("SuperHookableToken", async () => {
       );
 
 
-      await assertConvictionCorrect(agreementProxy, superHookableToken, convictionApp,
-        0, 10, 0, 1, 0, 0.9
+      const proposal = await agreementProxy.getProposal(superHookableToken.address,
+        convictionApp.address,
+        0
       );
+
+      expect(proposal.amount).to.equal(51 * D);
+
+      const res = calConviction(10, 0, 1, 0, 0.9) + calConviction(10, 0, 50, 0, 0.9);
+
+      const resInt = ethers.BigNumber.from(Math.floor(res * 10 ** 3));
+      expect(proposal.lastConviction.div(10 ** (7 - 3)).toString()).to.equal(resInt.toString());
 
     });
 
-    it("can set proposal to Pass", async () => {
+    it("mutliple people can vote with flow and calculate conviction correctly", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      await sf.host.callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "createProposal",
+          [superHookableToken.address, convictionApp.address, proposalParam, "0x"]
+        ),
+        "0x");
+
+      await createFlow(sf, superHookableToken, user3, user1, ethers.BigNumber.from(10).pow(14));
+      await createFlow(sf, superHookableToken, user3, user2, ethers.BigNumber.from(10).pow(14));
+
+
+      await sf.host.connect(user1).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 0, 0.5 * D, "0x"]
+        ), "0x");
+
+      await sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 0, 1 * D, "0x"]
+        ), "0x");
+
+
+
+      await ethers.provider.send('evm_increaseTime', [600]);
+      await ethers.provider.send('evm_mine', []);
+
+      await sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "updateProposalConvictionAndStatus",
+          [superHookableToken.address, convictionApp.address, 0, "0x"]
+        ), "0x"
+      );
+
+
+      const proposal = await agreementProxy.getProposal(superHookableToken.address,
+        convictionApp.address,
+        0
+      );
+
+
+      const newAmount1 = await agreementProxy.getUserVoteAmount(superHookableToken.address,
+        convictionApp.address,
+        0, user1.address);
+
+      const newAmount2 = await agreementProxy.getUserVoteAmount(superHookableToken.address,
+        convictionApp.address,
+        0, user2.address);
+
+      const flowPerStep = (10 ** -4 * proposalParam.numSecondPerStep);
+
+      const res = calConviction(10, 0, newAmount1.toNumber() / D, flowPerStep * 0.5, 0.9)
+        + calConviction(10, 0, newAmount2.toNumber() / D, flowPerStep, 0.9);
+
+
+      const resInt = ethers.BigNumber.from(Math.floor(res * 10 ** 3));
+      expect(proposal.lastConviction.div(10 ** (7 - 3)).toString()).to.equal(resInt.toString());
+
+
+    });
+
+
+    it("can set proposal to Pass if conviction > threshold", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
       const newParam = { ...proposalParam, requiredConviction: 6 * D }
-      await createProposalAndVote(sf, agreementProxy, superHookableToken, convictionApp,
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
         newParam, D, user2);
 
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
@@ -257,12 +356,42 @@ describe("SuperHookableToken", async () => {
 
     });
 
+    it("cannot vote Passed proposal", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      const newParam = { ...proposalParam, requiredConviction: 6 * D }
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
+        newParam, D, user2);
+
+      await sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "updateProposalConvictionAndStatus",
+          [superHookableToken.address, convictionApp.address, 0, "0x"]
+        ), "0x"
+      );
+
+      await assertConvictionCorrect(agreementProxy, superHookableToken, convictionApp,
+        0, 10, 0, 1, 0, 0.9
+      );
+
+
+      let proposal = await agreementProxy.getProposal(superHookableToken.address, convictionApp.address, 0);
+      expect(proposal.status).to.equal(1);
+
+      await expect(sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 0, 1 * D, "0x"]
+        ), "0x")).to.be.revertedWith("Can only vote Active Proposal");
+
+
+    });
 
     it("can remove User's inactive proposals when user vote", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
       const newParam = { ...proposalParam, requiredConviction: 6 * D }
-      await createProposalAndVote(sf, agreementProxy, superHookableToken, convictionApp,
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
         newParam, D, user2);
 
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
@@ -288,7 +417,100 @@ describe("SuperHookableToken", async () => {
 
     });
 
-    it("can correctly calculate Conviction with dynamic Amount", async () => {
+    it("can remove User's target active proposals when target percentage = 0", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
+        proposalParam, D, user2);
+
+      await sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 0, 0 * D, "0x"]
+        ), "0x"
+      );
+
+      await assertConvictionCorrect(agreementProxy, superHookableToken, convictionApp,
+        0, 10, 0, 1, 0, 0.9
+      );
+
+
+      const userProposals = await agreementProxy.getVotingProposalsByAppUser(superHookableToken.address,
+        convictionApp.address, user2.address);
+      expect(userProposals.length).to.equal(0);
+
+      const appProposalIds = await agreementProxy.getVotingProposalsByUser(superHookableToken.address,
+        user2.address);
+
+      expect(appProposalIds.length).to.equal(0);
+
+    });
+
+    it("cannot vote with total percentage > 100%", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
+        proposalParam, D, user2);
+
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
+        proposalParam, D, user3);
+
+
+      await expect(sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 1, 0.5 * D, "0x"]
+        ), "0x"
+      )).to.be.revertedWith("Total Voting Percentage must <= 100%");
+
+
+    });
+
+    it("can vote if another proposal becomes inactive such that total percentage <= 100%", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
+        proposalParam, D, user3);
+
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
+        { ...proposalParam, requiredConviction: 6 * D }, D, user2);
+
+
+      await sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 0, 1 * D, "0x"]
+        ), "0x"
+      );
+
+
+    });
+
+  })
+
+
+  describe("updateProposalConvictionAndStatus()", async () => {
+    it("can update Conviction with static Amount", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
+        proposalParam, D, user2);
+
+      await sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "updateProposalConvictionAndStatus",
+          [superHookableToken.address, convictionApp.address, 0, "0x"]
+        ), "0x"
+      );
+
+
+      await assertConvictionCorrect(agreementProxy, superHookableToken, convictionApp,
+        0, 10, 0, 1, 0, 0.9
+      );
+
+    });
+
+    it("can update Conviction with dynamic Amount (Flow)", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
       await sf.host.callAgreement(agreementProxy.address,
@@ -331,11 +553,52 @@ describe("SuperHookableToken", async () => {
 
     });
 
+    it("can set Proposal Pass when local Max > threshold even currentConvication < threshold (Assume still solvent)", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
+      await sf.host.callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "createProposal",
+          [superHookableToken.address, convictionApp.address,
+          { ...proposalParam, requiredConviction: 5 * D }, "0x"]
+        ),
+        "0x");
+
+
+      await createFlow(sf, superHookableToken, user3, user2, ethers.utils.parseEther("0.001"));
+
+
+      await sf.host.connect(user3).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 0, 0.01 * D, "0x"]
+        ), "0x");
+
+
+      await ethers.provider.send('evm_increaseTime', [1000 * 60]);
+      await ethers.provider.send('evm_mine', []);
+
+      await sf.host.connect(user2).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "updateProposalConvictionAndStatus",
+          [superHookableToken.address, convictionApp.address, 0, "0x"]
+        ), "0x"
+      );
+
+
+      let proposal = await agreementProxy.getProposal(superHookableToken.address, convictionApp.address, 0);
+      expect(proposal.status).to.equal(1);
+
+    });
+
+
+  })
+
+  describe("Hook Related Functions", async () => {
     it("can correctly Update Conviction when flow change ", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
-      await createProposalAndVote(sf, agreementProxy, superHookableToken, convictionApp,
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
         proposalParam, D, user2);
 
 
@@ -358,7 +621,7 @@ describe("SuperHookableToken", async () => {
     it("can correctly Update Conviction when downgrade ", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
-      await createProposalAndVote(sf, agreementProxy, superHookableToken, convictionApp,
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
         proposalParam, D, user2);
 
 
@@ -380,7 +643,7 @@ describe("SuperHookableToken", async () => {
     it("can correctly Update Conviction when upgrade ", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
-      await createProposalAndVote(sf, agreementProxy, superHookableToken, convictionApp,
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
         proposalParam, D, user2);
 
 
@@ -403,7 +666,7 @@ describe("SuperHookableToken", async () => {
     it("can correctly Update Conviction when transfer ", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
-      await createProposalAndVote(sf, agreementProxy, superHookableToken, convictionApp,
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
         proposalParam, D, user2);
 
 
@@ -422,13 +685,11 @@ describe("SuperHookableToken", async () => {
     });
 
 
-
-
     it("doesnt Update status && Only Update Conviction on Hook Callback ", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
       const newParam = { ...proposalParam, requiredConviction: 6 * D }
-      await createProposalAndVote(sf, agreementProxy, superHookableToken, convictionApp,
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
         newParam, D, user2);
 
 
@@ -465,8 +726,6 @@ describe("SuperHookableToken", async () => {
 
 
     });
-
-
 
 
   })
@@ -507,9 +766,14 @@ const assertConvictionCorrect = async (
     proposalId
   );
 
-  console.log("online Conviction", conviction.toString());
+  // console.log("online Conviction", conviction.toString());
+
+  // console.log(n)
+  // console.log(y_0)
+  // console.log(x_0)
+  // console.log(flowRate)
+  // console.log(alpha)
   const res = calConviction(n, y_0, x_0, flowRate, alpha);
-  console.log(res.toString());
 
   const resInt = ethers.BigNumber.from(Math.floor(res * 10 ** correctNumDecimal));
   expect(conviction.div(10 ** (7 - correctNumDecimal)).toString()).to.equal(resInt.toString());
@@ -534,7 +798,7 @@ const createFlow = async (sf: any,
 }
 
 
-const createProposalAndVote = async (sf: any,
+const createProposalAndVoteAndWait = async (sf: any,
   agreementProxy: ConvictionAgreementV1,
   superHookableToken: SuperHookableToken,
   convictionApp: ConvictionApp,

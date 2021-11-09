@@ -107,7 +107,10 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         onlyActiveProposal(app, token, proposalId)
         returns (bytes memory newCtx)
     {
-        require(percentage > 0, "Must vote > 0");
+        require(
+            percentage >= 0 && percentage <= DECIMAL_MULTIPLIER,
+            "Target Percentage must >=0 and <= 100%"
+        );
 
         UserTokenVoteData storage userTokenData;
         ProposalData storage proposal;
@@ -569,10 +572,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
                 newTotalVotedPercentage = newTotalVotedPercentage.sub(
                     freedPercentage
                 );
-                _deleteAppProposalIdId(
-                    userTokenData.votingProposals,
-                    proposalId
-                );
+                _deleteProposalId(userTokenData.votingProposals, proposalId);
 
                 _deleteAppProposalId(
                     _userTokenProposalIndex[userTokenData.user][p.governToken],
@@ -592,7 +592,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         uint256 targetPercentage,
         UserTokenVoteData storage userTokenData
     ) internal {
-        console.log("__votePercentage");
         require(targetPercentage >= 0, "Voting Percentage >= 0");
 
         if (targetProposal.status != ProposalStatus.Active) {
@@ -601,7 +600,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
 
         uint256 votingAmount;
         {
-            console.log("bf votingAmount");
             int256 balance = getAllBalance(targetProposal.governToken, user);
             if (balance < 0) {
                 //insolvent;
@@ -657,7 +655,9 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
             int256 userFlowRate = int256(flowRate)
                 .mul(int256(DECIMAL_MULTIPLIER))
                 .div(int256(targetProposal.param.tokenScalingFactor))
-                .mul(int256(targetProposal.param.numSecondPerStep));
+                .mul(int256(targetProposal.param.numSecondPerStep))
+                .mul(int256(targetPercentage))
+                .div(int256(DECIMAL_MULTIPLIER));
 
             targetProposal.flowRate = targetProposal
                 .flowRate
@@ -681,18 +681,30 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
             ] = userFlowRate;
         }
         {
-            _upsertAppProposalIndexId(
-                userTokenData.votingProposals,
-                targetProposal.proposalId
-            );
+            if (targetPercentage == 0) {
+                _deleteProposalId(
+                    userTokenData.votingProposals,
+                    targetProposal.proposalId
+                );
+                _deleteAppProposalId(
+                    _userTokenProposalIndex[user][targetProposal.governToken],
+                    targetProposal.app,
+                    targetProposal.proposalId
+                );
+            } else {
+                _upsertProposalId(
+                    userTokenData.votingProposals,
+                    targetProposal.proposalId
+                );
 
-            _upsertAppProposalIndex(
-                _userTokenProposalIndex[user][targetProposal.governToken],
-                AppProposalId({
-                    app: targetProposal.app,
-                    proposalId: targetProposal.proposalId
-                })
-            );
+                _upsertAppProposalIndex(
+                    _userTokenProposalIndex[user][targetProposal.governToken],
+                    AppProposalId({
+                        app: targetProposal.app,
+                        proposalId: targetProposal.proposalId
+                    })
+                );
+            }
         }
     }
 
@@ -893,9 +905,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         return targetIndex;
     }
 
-    function _upsertAppProposalIndexId(uint256[] storage array, uint256 item)
-        internal
-    {
+    function _upsertProposalId(uint256[] storage array, uint256 item) internal {
         int256 index = _findProposalId(array, item);
 
         if (index == -1) {
@@ -914,7 +924,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         }
     }
 
-    function _deleteAppProposalIdId(uint256[] storage self, uint256 item)
+    function _deleteProposalId(uint256[] storage self, uint256 item)
         internal
         returns (bool)
     {
@@ -1054,10 +1064,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
     {
         (int256 availableBalance, uint256 deposit, uint256 owedDeposit) = token
             .realtimeBalanceOf(account, block.timestamp);
-
-        console.log("avai", uint256(availableBalance));
-        console.log("deposit", uint256(deposit));
-        console.log("owedDeposit", uint256(owedDeposit));
 
         int256 allBalance = availableBalance.add(
             (deposit > owedDeposit ? int256(deposit - owedDeposit) : 0)
