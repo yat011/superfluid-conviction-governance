@@ -12,8 +12,6 @@ import {SignedSafeMath} from "@openzeppelin/contracts/math/SignedSafeMath.sol";
 import {ITokenObserver, ISuperHookManager} from "../interfaces/tokens/ISuperHookManager.sol";
 import {ISuperHookableToken} from "../interfaces/tokens/ISuperHookableToken.sol";
 import {IConvictionAgreementV1} from "../interfaces/agreements/IConvictionAgreementV1.sol";
-import "hardhat/console.sol";
-
 import {mathUtils} from "../utils/mathUtils.sol";
 
 contract ConvictionAgreementV1 is IConvictionAgreementV1 {
@@ -263,7 +261,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         address app,
         uint256 proposalId
     ) public view override returns (uint256) {
-        console.log("getProposalLastConviction", proposalId);
         return
             _appTokenProposalIndex[app][token]
                 .proposals[proposalId]
@@ -306,7 +303,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         // Y = a^x y_0 + (1-a^x)/(1-a) x_0 + \beta *(x * (1-a^x)/(1-a) - (a - a^x)/(1-a)^2 + (x-1)/(1-a)*a^x), x = time
         // A = a^t * y_0
         // Conviction_D = A  + B x + C * flowrate
-        //(1- a**x)
 
         require(numStep >= 1, "Numstep needs to >= 1");
 
@@ -338,10 +334,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
 
             C_D = BCoff_D.mul(numStep);
             result = result.add(amount.mul(BCoff_D).div(DECIMAL_MULTIPLIER));
-
-            console.log("No Flow Result", result);
         }
-        // console.log("C_D1", C_D);
 
         C_D = C_D.add(
             alphaPowerStepF128
@@ -349,14 +342,12 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
                 .div(oneMinusAlphaF128)
                 .mul(numStep - 1)
         );
-        // console.log("C_D2", C_D);
 
         C_D = C_D.sub(
             alphaF128.sub(alphaPowerStepF128).mul(DECIMAL_MULTIPLIER).div(
                 mathUtils.fixedFractionalPow(oneMinusAlphaF128, 2)
             )
         );
-        // console.log("C_D3", C_D);
 
         if (flowRate > 0) {
             C_D = uint256(flowRate).mul(C_D).div(DECIMAL_MULTIPLIER);
@@ -492,8 +483,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         ISuperHookableToken token,
         address user
     ) internal {
-        console.log("Now in updateUserProposalsOnCallBack");
-
         AppProposalId[] storage appProposalIds = _userTokenProposalIndex[user][
             token
         ];
@@ -636,7 +625,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
                 .mul(targetPercentage)
                 .div(DECIMAL_MULTIPLIER);
 
-            console.log("new voting amount", votingAmount);
             targetProposal.amount = targetProposal
                 .amount
                 .sub(userTokenData.votingAmount[targetProposal.proposalId])
@@ -644,12 +632,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         }
 
         {
-            console.log("totalVoted", userTokenData.totalVotedPercentage);
-            console.log(
-                "prev voting",
-                userTokenData.votingPercentage[targetProposal.proposalId]
-            );
-
             userTokenData.totalVotedPercentage = userTokenData
                 .totalVotedPercentage
                 .sub(userTokenData.votingPercentage[targetProposal.proposalId])
@@ -686,18 +668,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
                 .flowRate
                 .sub(userTokenData.votingFlowRate[targetProposal.proposalId])
                 .add(userFlowRate);
-
-            if (targetProposal.flowRate < 0) {
-                console.log(
-                    "negative targetProposal.flowRate ",
-                    uint256(-targetProposal.flowRate)
-                );
-            } else {
-                console.log(
-                    "result targetProposal.flowRate ",
-                    uint256(targetProposal.flowRate)
-                );
-            }
 
             userTokenData.votingFlowRate[
                 targetProposal.proposalId
@@ -769,16 +739,11 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         internal
         returns (bool statusChanged, ProposalStatus newStatus)
     {
-        console.log("lastTimeStamp");
-        console.log(p.lastTimeStamp);
-        console.log(block.timestamp);
-
         uint256 numStep = getNumStep(
             p.lastTimeStamp,
             uint256(block.timestamp),
             p.param.numSecondPerStep
         );
-        console.log("numStep", numStep);
 
         (statusChanged, newStatus) = _getNewProposalStatus(p, numStep); // conviction could be precomputed due to hook;
         if (statusChanged) {
@@ -839,7 +804,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
                 }
             }
         }
-        console.log("Previous conviction", p.lastConviction);
         uint256 currentConviction = calculateConviction(
             numStep,
             p.lastConviction,
@@ -1102,7 +1066,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
             hookableToken
         );
         if (sender != address(agreement)) {
-            console.log("onUpdateAgreement: not constant aggreement");
             return;
         }
         _refreshOnUserBalanceFlow(token, account);
@@ -1184,8 +1147,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
     }
 
     modifier onlyHookManager() {
-        console.log("hook manager", address(_hookManager));
-        console.log("msg sender", msg.sender);
         require(
             msg.sender == address(_hookManager),
             "Only hook manager can call"

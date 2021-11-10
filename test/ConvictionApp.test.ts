@@ -9,7 +9,6 @@ const deployFramework = require("@superfluid-finance/ethereum-contracts/scripts/
 const SuperfluidSDK = require("@superfluid-finance/js-sdk");
 
 describe("ConvictionAgreementV1", async () => {
-    // const [user1, user2, user3] = await ethers.getSigners();
 
     const [user1, user2, user3] = waffle.provider.getWallets();
     const abiCoder = new ethers.utils.AbiCoder();
@@ -348,7 +347,6 @@ const createFlow = async (sf: any,
 
     const IConstantFlowAgreementV1 = await sf.contracts['IConstantFlowAgreementV1'];
     const cfa = new Contract(sf.cfa._cfa.address, IConstantFlowAgreementV1.abi, ethers.provider);
-    console.log(superHookableToken.address);
 
     await sf.host.connect(from).callAgreement(cfa.address,
         cfa.interface.encodeFunctionData(

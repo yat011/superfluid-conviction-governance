@@ -689,8 +689,6 @@ describe("ConvictionAgreementV1", async () => {
     it("doesnt Update status && Only Update Conviction on Hook Callback ", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam, hookManager } = await setupTests();
 
-      console.log("DEPLOLYED _hookManager");
-      console.log(hookManager.address);
 
       const newParam = { ...proposalParam, requiredConviction: 6 * D }
       await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
@@ -791,7 +789,6 @@ const createFlow = async (sf: any,
 
   const IConstantFlowAgreementV1 = await sf.contracts['IConstantFlowAgreementV1'];
   const cfa = new Contract(sf.cfa._cfa.address, IConstantFlowAgreementV1.abi, ethers.provider);
-  console.log(superHookableToken.address);
 
   await sf.host.connect(from).callAgreement(cfa.address,
     cfa.interface.encodeFunctionData(

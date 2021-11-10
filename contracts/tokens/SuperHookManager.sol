@@ -1,5 +1,4 @@
 pragma solidity 0.7.6;
-import "hardhat/console.sol";
 
 import {ISuperHookManager, ITokenObserver} from "../interfaces/tokens/ISuperHookManager.sol";
 
@@ -98,7 +97,6 @@ contract SuperHookManager is ISuperHookManager {
         bytes32[] calldata data
     ) external override returns (bool) {
         ITokenObserver[] storage hooks = agreementHooks[sender];
-        console.log("Num hooks", hooks.length);
         for (uint256 i = 0; i < hooks.length; i++) {
             hooks[i].onUpdateAgreement(token, sender, id, data);
         }
@@ -113,7 +111,6 @@ contract SuperHookManager is ISuperHookManager {
         bytes32[] calldata data
     ) external override returns (bool) {
         ITokenObserver[] storage hooks = agreementStateHooks[sender];
-        console.log("Num hooks", hooks.length);
         for (uint256 i = 0; i < hooks.length; i++) {
             hooks[i].onUpdateAgreementState(token, sender, account, id, data);
         }
@@ -126,6 +123,10 @@ contract SuperHookManager is ISuperHookManager {
         bytes32 id,
         bytes32[] calldata data
     ) external override returns (bool) {
+        ITokenObserver[] storage hooks = agreementHooks[sender];
+        for (uint256 i = 0; i < hooks.length; i++) {
+            hooks[i].onTerminateAgreement(token, sender, id, data);
+        }
         return true;
     }
 }

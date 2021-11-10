@@ -1,5 +1,4 @@
 pragma solidity 0.7.6;
-import "hardhat/console.sol";
 
 interface ISuperHookManager {
     function onMint(
@@ -109,6 +108,13 @@ abstract contract ITokenObserver {
         address sender,
         address account,
         uint256 id,
+        bytes32[] calldata data
+    ) external virtual {}
+
+    function onTerminateAgreement(
+        address token,
+        address sender,
+        bytes32 id,
         bytes32[] calldata data
     ) external virtual {}
 }
