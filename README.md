@@ -11,7 +11,16 @@ npx hardhat test
 ```
 
 # Methodology
-Please detail here .....
+Please find the detail here .....
 
 # Components
-- ConvictionAgreement: This
+- ConvictionAgreement: This implements the core logic which handles the conviction calaution, proposal creation, user voting, and the changes of proposal's status. Execution of proposal is not included, and depends on DAO's application.
+
+
+- SuperHookableToken and HookManager: Used to observe any trnsfer/mint/burn/agremment update of the token in order to the conviction state accordingly.
+
+- ConvictionApp: Example SuperApp which use ConvictionAgreement.
+
+
+# Future works
+e.g. Optimate gas fee
