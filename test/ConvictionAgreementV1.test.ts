@@ -3,12 +3,10 @@ import hre, { deployments, waffle, ethers, web3 } from "hardhat";
 import "@nomiclabs/hardhat-ethers";
 import { BigNumberish, Contract, Wallet } from "ethers/lib/ethers";
 import { resourceLimits } from "worker_threads";
-import { ConstantFlowAgreementV1, ConvictionAgreementV1, ConvictionApp, SuperAppBase, SuperfluidToken, SuperHookableToken } from "../typechain";
+import { ConstantFlowAgreementV1, ConvictionAgreementV1, ConvictionApp, SuperAppBase, SuperfluidToken, SuperHookableToken, SuperHookManager, TestApp } from "../typechain";
 import internal from "stream";
 import { assert } from "console";
 const deployFramework = require("@superfluid-finance/ethereum-contracts/scripts/deploy-framework.js");
-const deployTestToken = require("@superfluid-finance/ethereum-contracts/scripts/deploy-test-token");
-const deploySuperToken = require("@superfluid-finance/ethereum-contracts/scripts/deploy-super-token");
 
 const SuperfluidSDK = require("@superfluid-finance/js-sdk");
 
@@ -53,7 +51,7 @@ describe("ConvictionAgreementV1", async () => {
     }
   }
 
-  const setupAgreement = async (sf: any) => {
+  const setupAgreement = async (sf: any, hookManager: SuperHookManager) => {
     /// agreement
     const mathUtilsFactory = await ethers.getContractFactory("mathUtils");
     const mathUtils = await mathUtilsFactory.deploy()
@@ -74,7 +72,9 @@ describe("ConvictionAgreementV1", async () => {
     await goverance.registerAgreementClass(sf.host.address, agreement.address);
 
     const agreementProxy = await ethers.getContractAt("ConvictionAgreementV1", await sf.host.getAgreementClass(atype));
-    const appFactory = await ethers.getContractFactory("ConvictionApp");
+    await agreementProxy.setHookManager(hookManager.address);
+
+    const appFactory = await ethers.getContractFactory("TestApp");
     const convictionApp = await appFactory.deploy(sf.host.address, agreementProxy.address);
 
     return {
@@ -105,7 +105,7 @@ describe("ConvictionAgreementV1", async () => {
     await sf.initialize();
 
     const tokenRelated = await setupTokenAndHook(sf);
-    const appAndAgreement = await setupAgreement(sf);
+    const appAndAgreement = await setupAgreement(sf, tokenRelated.hookManager);
 
     await tokenRelated.hookManager.registerAgreemenStateHook(appAndAgreement.agreementProxy.address,
       sf.cfa._cfa.address);
@@ -141,7 +141,7 @@ describe("ConvictionAgreementV1", async () => {
       await sf.host.callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "createProposal",
-          [superHookableToken.address, convictionApp.address, proposalParam, "0x"]
+          [superHookableToken.address, convictionApp.address, proposalParam, ethers.utils.toUtf8Bytes("hello"), "0x"]
         ),
         "0x");
 
@@ -163,6 +163,7 @@ describe("ConvictionAgreementV1", async () => {
       expect(proposalData.param.requiredConviction).to.equal(proposalParam.requiredConviction);
       expect(proposalData.param.numSecondPerStep).to.equal(proposalParam.numSecondPerStep);
       expect(proposalData.param.tokenScalingFactor).to.equal(proposalParam.tokenScalingFactor);
+      expect(ethers.utils.toUtf8String(proposalData.data)).to.equal("hello");
 
     });
   });
@@ -174,7 +175,7 @@ describe("ConvictionAgreementV1", async () => {
       await sf.host.callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "createProposal",
-          [superHookableToken.address, convictionApp.address, proposalParam, "0x"]
+          [superHookableToken.address, convictionApp.address, proposalParam, ethers.utils.toUtf8Bytes("hello"), "0x"]
         ),
         "0x");
 
@@ -223,7 +224,7 @@ describe("ConvictionAgreementV1", async () => {
       await sf.host.callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "createProposal",
-          [superHookableToken.address, convictionApp.address, proposalParam, "0x"]
+          [superHookableToken.address, convictionApp.address, proposalParam, ethers.utils.toUtf8Bytes("hello"), "0x"]
         ),
         "0x");
 
@@ -272,7 +273,7 @@ describe("ConvictionAgreementV1", async () => {
       await sf.host.callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "createProposal",
-          [superHookableToken.address, convictionApp.address, proposalParam, "0x"]
+          [superHookableToken.address, convictionApp.address, proposalParam, ethers.utils.toUtf8Bytes("hello"), "0x"]
         ),
         "0x");
 
@@ -516,7 +517,7 @@ describe("ConvictionAgreementV1", async () => {
       await sf.host.callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "createProposal",
-          [superHookableToken.address, convictionApp.address, proposalParam, "0x"]
+          [superHookableToken.address, convictionApp.address, proposalParam, "0x", "0x"]
         ),
         "0x");
 
@@ -553,14 +554,14 @@ describe("ConvictionAgreementV1", async () => {
 
     });
 
-    it("can set Proposal Pass when local Max > threshold even currentConvication < threshold (Assume still solvent)", async () => {
+    it("can set Proposal Pass when local Max > threshold even currentConviction < threshold (Assume still solvent, i.e. currentConviction >= 0)", async () => {
       const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
 
       await sf.host.callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "createProposal",
           [superHookableToken.address, convictionApp.address,
-          { ...proposalParam, requiredConviction: 5 * D }, "0x"]
+          { ...proposalParam, requiredConviction: 5 * D }, "0x", "0x"]
         ),
         "0x");
 
@@ -686,7 +687,10 @@ describe("ConvictionAgreementV1", async () => {
 
 
     it("doesnt Update status && Only Update Conviction on Hook Callback ", async () => {
-      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam, hookManager } = await setupTests();
+
+      console.log("DEPLOLYED _hookManager");
+      console.log(hookManager.address);
 
       const newParam = { ...proposalParam, requiredConviction: 6 * D }
       await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
@@ -756,7 +760,7 @@ const calConviction = (n: number, y_0: number, x_0: number, flowRate: number, al
 const assertConvictionCorrect = async (
   agreementProxy: ConvictionAgreementV1,
   superHookableToken: SuperHookableToken,
-  convictionApp: ConvictionApp,
+  convictionApp: TestApp,
   proposalId: number,
   n: number, y_0: number, x_0: number, flowRate: number, alpha: number,
   correctNumDecimal = 3) => {
@@ -801,7 +805,7 @@ const createFlow = async (sf: any,
 const createProposalAndVoteAndWait = async (sf: any,
   agreementProxy: ConvictionAgreementV1,
   superHookableToken: SuperHookableToken,
-  convictionApp: ConvictionApp,
+  convictionApp: TestApp,
   proposalParam: any,
   D: number,
   user: Wallet) => {
@@ -809,7 +813,7 @@ const createProposalAndVoteAndWait = async (sf: any,
   await sf.host.callAgreement(agreementProxy.address,
     agreementProxy.interface.encodeFunctionData(
       "createProposal",
-      [superHookableToken.address, convictionApp.address, proposalParam, "0x"]
+      [superHookableToken.address, convictionApp.address, proposalParam, ethers.utils.toUtf8Bytes("hello"), "0x"]
     ),
     "0x");
 

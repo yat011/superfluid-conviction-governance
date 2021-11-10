@@ -9,7 +9,7 @@ import {IConstantFlowAgreementV1} from "@superfluid-finance/ethereum-contracts/c
 import {AgreementLibrary} from "@superfluid-finance/ethereum-contracts/contracts/agreements/AgreementLibrary.sol";
 import {SafeMath} from "@openzeppelin/contracts/math/SafeMath.sol";
 import {SignedSafeMath} from "@openzeppelin/contracts/math/SignedSafeMath.sol";
-import {ITokenObserver} from "../interfaces/tokens/ISuperHookManager.sol";
+import {ITokenObserver, ISuperHookManager} from "../interfaces/tokens/ISuperHookManager.sol";
 import {ISuperHookableToken} from "../interfaces/tokens/ISuperHookableToken.sol";
 import {IConvictionAgreementV1} from "../interfaces/agreements/IConvictionAgreementV1.sol";
 import "hardhat/console.sol";
@@ -22,11 +22,10 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
 
     uint256 private constant DECIMAL_MULTIPLIER = 10000000; //demicals for conviction/param
 
-    /// For agreement data
-    string public constant AGREEMENT_UPDATE_STATUS = "AGREEMENT_UPDATE_STATUS";
-
     bytes32 public constant CONSTANT_FLOW_V1 =
         keccak256("org.superfluid-finance.agreements.ConstantFlowAgreement.v1");
+
+    ISuperHookManager _hookManager;
 
     constructor() {}
 
@@ -64,13 +63,21 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
 
     ///============ Conviction Agreement Interface functions ================
 
+    function setHookManager(ISuperHookManager hookManager) external override {
+        require(
+            address(_hookManager) == address(0),
+            "HookManager can be set once only"
+        );
+        _hookManager = hookManager;
+    }
+
     function createProposal(
         ISuperHookableToken token,
         address app,
         ProposalParam calldata param,
+        bytes calldata proposalData,
         bytes calldata ctx
     ) external override returns (bytes memory newCtx) {
-        console.log("Create Proposal");
         ISuperfluid.Context memory currentContext = AgreementLibrary
             .authorizeTokenAccess(token, ctx);
 
@@ -83,6 +90,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         proposal.governToken = token;
         proposal.app = app;
         proposal.lastTimeStamp = block.timestamp;
+        proposal.data = proposalData;
         index.proposals.push(proposal);
 
         bytes32 dataId = _generateDataId(app, newProposalId);
@@ -112,6 +120,14 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
             "Target Percentage must >=0 and <= 100%"
         );
 
+        _callBeforeAgreementUpdated(
+            token,
+            app,
+            proposalId,
+            AGREEMENT_UPDATE_VOTING,
+            ctx
+        );
+
         UserTokenVoteData storage userTokenData;
         ProposalData storage proposal;
         ProposalIndex storage pIndex;
@@ -130,7 +146,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         }
 
         {
-            console.log("before update");
             _updateRelatedConvictionStates(token, app, userTokenData, ctx);
         }
         {
@@ -147,6 +162,14 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         }
         emit UserVoted(address(token), app, proposalId, percentage);
         newCtx = ctx;
+
+        _callAfterAgreementUpdated(
+            token,
+            app,
+            proposalId,
+            AGREEMENT_UPDATE_VOTING,
+            ctx
+        );
     }
 
     function updateProposalConvictionAndStatus(
@@ -845,13 +868,6 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         }
     }
 
-    function _getLatestConviction(ProposalData storage p)
-        internal
-        returns (uint256)
-    {
-        return 0;
-    }
-
     function _generateDataId(address app, uint256 proposalId)
         private
         pure
@@ -1007,7 +1023,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         ISuperHookableToken token,
         address account,
         uint256 proposalId,
-        string memory updateType,
+        bytes memory updateType,
         bytes calldata ctx
     ) internal {
         AgreementLibrary.CallbackInputs memory cbStates;
@@ -1026,7 +1042,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         ISuperHookableToken token,
         address account,
         uint256 proposalId,
-        string memory updateType,
+        bytes memory updateType,
         bytes calldata ctx
     ) internal {
         AgreementLibrary.CallbackInputs memory cbStates;
@@ -1080,7 +1096,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         address account,
         uint256 id,
         bytes32[] calldata data
-    ) external override {
+    ) external override onlyHookManager {
         ISuperHookableToken hookableToken = ISuperHookableToken(token);
         IConstantFlowAgreementV1 agreement = _getConstantFlowAgreement(
             hookableToken
@@ -1096,7 +1112,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         address token,
         address from,
         uint256 amount
-    ) external override {
+    ) external override onlyHookManager {
         _refreshOnUserBalanceFlow(token, from);
     }
 
@@ -1104,7 +1120,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         address token,
         address to,
         uint256 amount
-    ) external override {
+    ) external override onlyHookManager {
         _refreshOnUserBalanceFlow(token, to);
     }
 
@@ -1112,7 +1128,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         address token,
         address from,
         uint256 amount
-    ) external override {
+    ) external override onlyHookManager {
         _refreshOnUserBalanceFlow(token, from);
     }
 
@@ -1120,7 +1136,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         address token,
         address to,
         uint256 amount
-    ) external override {
+    ) external override onlyHookManager {
         _refreshOnUserBalanceFlow(token, to);
     }
 
@@ -1129,7 +1145,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         address account,
         int256 amount,
         int256 delta
-    ) external override {
+    ) external override onlyHookManager {
         _refreshOnUserBalanceFlow(token, account);
     }
 
@@ -1142,7 +1158,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         }
     }
 
-    //========= Modifier===========
+    //========= Modifier ===========
 
     modifier onlyActiveProposal(
         address app,
@@ -1163,6 +1179,16 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         require(
             proposal.governToken == token,
             "Token must match the governance token of the proposal"
+        );
+        _;
+    }
+
+    modifier onlyHookManager() {
+        console.log("hook manager", address(_hookManager));
+        console.log("msg sender", msg.sender);
+        require(
+            msg.sender == address(_hookManager),
+            "Only hook manager can call"
         );
         _;
     }

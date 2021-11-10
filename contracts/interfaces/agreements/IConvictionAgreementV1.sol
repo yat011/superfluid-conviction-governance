@@ -4,9 +4,14 @@ pragma abicoder v2;
 
 import {AgreementBase} from "@superfluid-finance/ethereum-contracts/contracts/agreements/AgreementBase.sol";
 import {ISuperHookableToken} from "../tokens/ISuperHookableToken.sol";
-import {ITokenObserver} from "../tokens/ISuperHookManager.sol";
+import {ITokenObserver, ISuperHookManager} from "../tokens/ISuperHookManager.sol";
 
 abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
+    bytes public constant AGREEMENT_UPDATE_STATUS =
+        abi.encodePacked("AGREEMENT_UPDATE_STATUS");
+    bytes public constant AGREEMENT_UPDATE_VOTING =
+        abi.encodePacked("AGREEMENT_UPDATE_VOTING");
+
     struct ProposalParam {
         uint256 alpha;
         uint256 requiredConviction;
@@ -29,6 +34,7 @@ abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
         int256 flowRate; //scaled, per step instead of second
         ProposalStatus status;
         ProposalParam param;
+        bytes data; // app-dependent data
     }
     struct AppProposalId {
         address app;
@@ -40,10 +46,13 @@ abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
         return keccak256("hackathon.ConvictionAgreement.v1");
     }
 
+    function setHookManager(ISuperHookManager hookManager) external virtual;
+
     function createProposal(
         ISuperHookableToken token,
         address app,
         ProposalParam calldata param,
+        bytes calldata proposalData,
         bytes calldata ctx
     ) external virtual returns (bytes memory newCtx);
 
