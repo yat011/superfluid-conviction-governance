@@ -1,13 +1,9 @@
 import { expect } from "chai";
 import hre, { deployments, waffle, ethers, web3 } from "hardhat";
 import "@nomiclabs/hardhat-ethers";
-import { BigNumberish, Contract, Wallet } from "ethers/lib/ethers";
-import { resourceLimits } from "worker_threads";
-import { ConstantFlowAgreementV1, ConvictionAgreementV1, ConvictionApp, SuperAppBase, SuperfluidToken, SuperHookableToken, SuperHookManager, TestApp } from "../typechain";
-import internal from "stream";
-import { assert } from "console";
+import { BigNumber, BigNumberish, Contract, Wallet } from "ethers/lib/ethers";
+import { ConvictionAgreementV1, SuperHookableToken, SuperHookManager, TestApp } from "../typechain";
 const deployFramework = require("@superfluid-finance/ethereum-contracts/scripts/deploy-framework.js");
-
 const SuperfluidSDK = require("@superfluid-finance/js-sdk");
 
 describe("ConvictionAgreementV1", async () => {
@@ -229,12 +225,14 @@ describe("ConvictionAgreementV1", async () => {
         "0x");
 
 
+      await ethers.provider.send('evm_increaseTime', [10]);
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "vote",
           [superHookableToken.address, convictionApp.address, 0, 1 * D, "0x"]
         ), "0x");
 
+      await ethers.provider.send('evm_increaseTime', [10]);
       await sf.host.connect(user3).callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "vote",
@@ -242,7 +240,7 @@ describe("ConvictionAgreementV1", async () => {
         ), "0x");
 
 
-      await ethers.provider.send('evm_increaseTime', [600]);
+      await ethers.provider.send('evm_increaseTime', [580]);
       await ethers.provider.send('evm_mine', []);
 
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
@@ -277,16 +275,19 @@ describe("ConvictionAgreementV1", async () => {
         ),
         "0x");
 
+      await ethers.provider.send('evm_increaseTime', [10]);
       await createFlow(sf, superHookableToken, user3, user1, ethers.BigNumber.from(10).pow(14));
+      await ethers.provider.send('evm_increaseTime', [10]);
       await createFlow(sf, superHookableToken, user3, user2, ethers.BigNumber.from(10).pow(14));
 
-
+      await ethers.provider.send('evm_increaseTime', [10]);
       await sf.host.connect(user1).callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "vote",
           [superHookableToken.address, convictionApp.address, 0, 0.5 * D, "0x"]
         ), "0x");
 
+      await ethers.provider.send('evm_increaseTime', [10]);
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "vote",
@@ -295,7 +296,7 @@ describe("ConvictionAgreementV1", async () => {
 
 
 
-      await ethers.provider.send('evm_increaseTime', [600]);
+      await ethers.provider.send('evm_increaseTime', [560]);
       await ethers.provider.send('evm_mine', []);
 
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
@@ -521,10 +522,10 @@ describe("ConvictionAgreementV1", async () => {
         ),
         "0x");
 
-
+      await ethers.provider.send('evm_increaseTime', [10]);
       await createFlow(sf, superHookableToken, user3, user2, ethers.BigNumber.from(10).pow(14));
 
-
+      await ethers.provider.send('evm_increaseTime', [10]);
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "vote",
@@ -536,7 +537,7 @@ describe("ConvictionAgreementV1", async () => {
         0,
         user2.address)).to.closeTo(ethers.BigNumber.from(10).pow(3).mul(proposalParam.numSecondPerStep), 1);
 
-      await ethers.provider.send('evm_increaseTime', [600]);
+      await ethers.provider.send('evm_increaseTime', [580]);
       await ethers.provider.send('evm_mine', []);
 
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
@@ -565,10 +566,10 @@ describe("ConvictionAgreementV1", async () => {
         ),
         "0x");
 
-
+      await ethers.provider.send('evm_increaseTime', [10]);
       await createFlow(sf, superHookableToken, user3, user2, ethers.utils.parseEther("0.001"));
 
-
+      await ethers.provider.send('evm_increaseTime', [10]);
       await sf.host.connect(user3).callAgreement(agreementProxy.address,
         agreementProxy.interface.encodeFunctionData(
           "vote",
@@ -576,7 +577,7 @@ describe("ConvictionAgreementV1", async () => {
         ), "0x");
 
 
-      await ethers.provider.send('evm_increaseTime', [1000 * 60]);
+      await ethers.provider.send('evm_increaseTime', [1000 * 60 - 20]);
       await ethers.provider.send('evm_mine', []);
 
       await sf.host.connect(user2).callAgreement(agreementProxy.address,
@@ -733,6 +734,154 @@ describe("ConvictionAgreementV1", async () => {
   })
 
 
+  describe("getLatestActiveConviction()", async () => {
+    it("can correctly calculate latest conviction (No Local Max.) ", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      const input = {
+        lastTimeStamp: 10,
+        lastConviction: 2.5 * D,
+        amount: 2.5 * D,
+        flowRate: 0.1 * D,
+        alpha: 0.9 * D,
+        numSecondPerStep: 1,
+        status: 0,
+        requiredConviction: 10 * D
+      }
+
+      const result = await agreementProxy.getLatestActiveConviction(input, 25);
+
+      assertPrecomputedConvictionCorrect(result.latestConviction,
+        25, input.lastConviction / D, input.amount / D, input.flowRate / D, input.alpha / D);
+
+      expect(result.latestTimeStamp).to.equal(35);
+    });
+
+    it("can correctly catch the max conviction when Local Max. > required ", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      const input = {
+        lastTimeStamp: 10,
+        lastConviction: 1.5 * D,
+        amount: 2.5 * D,
+        flowRate: -0.1 * D,
+        alpha: 0.9 * D,
+        numSecondPerStep: 1,
+        status: 0,
+        requiredConviction: 10 * D
+      }
+
+      const result = await agreementProxy.getLatestActiveConviction(input, 25);
+
+      //max occur at 11.68249 -> integer rounding -> 11
+      //max conviction ~= 12.8 > 10
+      assertPrecomputedConvictionCorrect(result.latestConviction,
+        11, input.lastConviction / D, input.amount / D, input.flowRate / D, input.alpha / D);
+
+      expect(result.latestTimeStamp).to.equal(21);
+    });
+
+
+    it("can correctly calculate the conviction when Local Max. < required ", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      const input = {
+        lastTimeStamp: 10,
+        lastConviction: 1.5 * D,
+        amount: 2.5 * D,
+        flowRate: -0.1 * D,
+        alpha: 0.9 * D,
+        numSecondPerStep: 1,
+        status: 0,
+        requiredConviction: 20 * D
+      }
+
+      const result = await agreementProxy.getLatestActiveConviction(input, 25);
+
+      //max occur at 11.68249 -> integer rounding -> 11
+      //max conviction ~= 12.8 < 20
+      assertPrecomputedConvictionCorrect(result.latestConviction,
+        25, input.lastConviction / D, input.amount / D, input.flowRate / D, input.alpha / D);
+
+      expect(result.latestTimeStamp).to.equal(35);
+    });
+
+
+    it("can correctly calculate the conviction when Local Max. < required ", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      const input = {
+        lastTimeStamp: 10,
+        lastConviction: 1.5 * D,
+        amount: 2.5 * D,
+        flowRate: -0.1 * D,
+        alpha: 0.9 * D,
+        numSecondPerStep: 1,
+        status: 0,
+        requiredConviction: 20 * D
+      }
+
+      const result = await agreementProxy.getLatestActiveConviction(input, 25);
+
+      //max occur at 11.68249 -> integer rounding -> 11
+      //max conviction ~= 12.8 < 20
+      assertPrecomputedConvictionCorrect(result.latestConviction,
+        25, input.lastConviction / D, input.amount / D, input.flowRate / D, input.alpha / D);
+
+      expect(result.latestTimeStamp).to.equal(35);
+    });
+
+
+    it("can correctly return (0,0)  when insolvent (amount becomes < 0 regardless init Conviction) ", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      const input = {
+        lastTimeStamp: 10,
+        lastConviction: 1.5 * D,
+        amount: 2.5 * D,
+        flowRate: -0.1 * D,
+        alpha: 0.9 * D,
+        numSecondPerStep: 1,
+        status: 0,
+        requiredConviction: 20 * D
+      }
+
+      const result = await agreementProxy.getLatestActiveConviction(input, 26);
+
+      expect(result.latestConviction).to.equal(0);
+
+      expect(result.latestTimeStamp).to.equal(0);
+    });
+
+
+    it("return the max conviction when Local Max. > required even if insolvent in the future", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      const input = {
+        lastTimeStamp: 10,
+        lastConviction: 1.5 * D,
+        amount: 2.5 * D,
+        flowRate: -0.1 * D,
+        alpha: 0.9 * D,
+        numSecondPerStep: 1,
+        status: 0,
+        requiredConviction: 10 * D
+      }
+
+      const result = await agreementProxy.getLatestActiveConviction(input, 30);
+
+      //max occur at 11.68249 -> integer rounding -> 11
+      //max conviction ~= 12.8 > 10
+      assertPrecomputedConvictionCorrect(result.latestConviction,
+        11, input.lastConviction / D, input.amount / D, input.flowRate / D, input.alpha / D);
+
+      expect(result.latestTimeStamp).to.equal(21);
+    });
+
+  })
+
+
+
 
 })
 
@@ -769,18 +918,24 @@ const assertConvictionCorrect = async (
   );
 
   // console.log("online Conviction", conviction.toString());
-
   // console.log(n)
   // console.log(y_0)
   // console.log(x_0)
   // console.log(flowRate)
   // console.log(alpha)
+
+  assertPrecomputedConvictionCorrect(conviction, n, y_0, x_0, flowRate, alpha);
+}
+
+const assertPrecomputedConvictionCorrect = async (conviction: BigNumber,
+  n: number, y_0: number, x_0: number, flowRate: number, alpha: number,
+  correctNumDecimal = 3) => {
   const res = calConviction(n, y_0, x_0, flowRate, alpha);
 
   const resInt = ethers.BigNumber.from(Math.floor(res * 10 ** correctNumDecimal));
   expect(conviction.div(10 ** (7 - correctNumDecimal)).toString()).to.equal(resInt.toString());
-
 }
+
 
 
 const createFlow = async (sf: any,
@@ -813,7 +968,7 @@ const createProposalAndVoteAndWait = async (sf: any,
       [superHookableToken.address, convictionApp.address, proposalParam, ethers.utils.toUtf8Bytes("hello"), "0x"]
     ),
     "0x");
-
+  await ethers.provider.send('evm_increaseTime', [10]);
   await sf.host.connect(user).callAgreement(agreementProxy.address,
     agreementProxy.interface.encodeFunctionData(
       "vote",
@@ -821,6 +976,6 @@ const createProposalAndVoteAndWait = async (sf: any,
     ), "0x");
 
 
-  await ethers.provider.send('evm_increaseTime', [600]);
+  await ethers.provider.send('evm_increaseTime', [590]);
   await ethers.provider.send('evm_mine', []);
 }

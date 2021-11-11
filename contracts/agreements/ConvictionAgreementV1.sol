@@ -378,7 +378,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
         uint256 numStep,
         uint256 amount,
         int256 flowRate
-    ) public returns (bool) {
+    ) public view returns (bool) {
         if (flowRate < 0) {
             uint256 delta = uint256(-flowRate).mul(numStep);
             if (delta > amount) {
@@ -745,14 +745,14 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
             p.param.numSecondPerStep
         );
 
-        (statusChanged, newStatus) = _getNewProposalStatus(p, numStep); // conviction could be precomputed due to hook;
+        (statusChanged, newStatus) = _getNewProposalStatus(p); // conviction could be precomputed due to hook;
         if (statusChanged) {
             return (statusChanged, newStatus);
         }
 
         _updateProposalConviction(p, numStep);
 
-        (statusChanged, newStatus) = _getNewProposalStatus(p, numStep);
+        (statusChanged, newStatus) = _getNewProposalStatus(p);
         if (statusChanged) {
             return (statusChanged, newStatus);
         }
@@ -763,59 +763,90 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
     function _updateProposalConviction(ProposalData storage p, uint256 numStep)
         internal
     {
-        if (p.status != ProposalStatus.Active) {
-            return;
+        CalculationInput memory input = CalculationInput({
+            lastTimeStamp: p.lastTimeStamp,
+            lastConviction: p.lastConviction,
+            amount: p.amount,
+            flowRate: p.flowRate,
+            alpha: p.param.alpha,
+            numSecondPerStep: p.param.numSecondPerStep,
+            status: p.status,
+            requiredConviction: p.param.requiredConviction
+        });
+
+        (
+            uint256 latestConviction,
+            uint256 latestActiveTimeStamp
+        ) = getLatestActiveConviction(input, numStep);
+
+        p.lastConviction = latestConviction;
+        p.lastTimeStamp = latestActiveTimeStamp;
+    }
+
+    function getLatestActiveConviction(
+        CalculationInput memory input,
+        uint256 numStep
+    )
+        public
+        view
+        override
+        returns (uint256 latestConviction, uint256 latestTimeStamp)
+    {
+        if (input.status != ProposalStatus.Active) {
+            return (input.lastConviction, input.lastTimeStamp);
         }
 
         if (numStep == 0) {
-            return;
+            return (input.lastConviction, input.lastTimeStamp);
         }
 
-        if (checkInsolvent(numStep, p.amount, p.flowRate)) {
-            return;
-        }
-
-        if (p.flowRate < 0) {
+        if (input.flowRate < 0) {
             int256 maxStep_D = getMaxConvictionStep(
-                p.lastConviction,
-                p.amount,
-                p.flowRate,
-                p.param.alpha
+                input.lastConviction,
+                input.amount,
+                input.flowRate,
+                input.alpha
             );
             if (maxStep_D >= 0) {
                 uint256 maxStep = uint256(maxStep_D).div(DECIMAL_MULTIPLIER); //integer division;
                 if (numStep >= maxStep) {
                     uint256 maxConviction = calculateConviction(
                         maxStep,
-                        p.lastConviction,
-                        p.amount,
-                        p.flowRate,
-                        p.param.alpha
+                        input.lastConviction,
+                        input.amount,
+                        input.flowRate,
+                        input.alpha
                     );
 
-                    if (maxConviction >= p.param.requiredConviction) {
-                        p.status = ProposalStatus.Pass;
-                        p.lastConviction = maxConviction;
-                        p.lastTimeStamp = p.lastTimeStamp.add(
-                            numStep.mul(p.param.numSecondPerStep)
+                    if (maxConviction >= input.requiredConviction) {
+                        return (
+                            maxConviction,
+                            input.lastTimeStamp.add(
+                                maxStep.mul(input.numSecondPerStep)
+                            )
                         );
-                        return;
                     }
                 }
+            }
+
+            if (checkInsolvent(numStep, input.amount, input.flowRate)) {
+                return (0, 0);
             }
         }
         uint256 currentConviction = calculateConviction(
             numStep,
-            p.lastConviction,
-            p.amount,
-            p.flowRate,
-            p.param.alpha
+            input.lastConviction,
+            input.amount,
+            input.flowRate,
+            input.alpha
         );
-        p.lastConviction = currentConviction;
-        p.lastTimeStamp = uint256(block.timestamp);
+        return (
+            currentConviction,
+            input.lastTimeStamp.add(numStep.mul(input.numSecondPerStep))
+        );
     }
 
-    function _getNewProposalStatus(ProposalData storage p, uint256 numStep)
+    function _getNewProposalStatus(ProposalData storage p)
         internal
         returns (bool changed, ProposalStatus nextStatus)
     {
@@ -827,7 +858,7 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
             return (true, ProposalStatus.Pass);
         }
 
-        if (checkInsolvent(numStep, p.amount, p.flowRate)) {
+        if (p.lastTimeStamp == 0) {
             return (true, ProposalStatus.Insolvent);
         }
     }

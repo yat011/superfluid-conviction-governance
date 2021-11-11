@@ -1,4 +1,4 @@
-# Superfluid Conviction Voting with Constant Flow Streaming Support
+# Superfluid Conviction Voting (Support Constant Flow Streaming)
 
 This hackathon work provides a generic conviction voting tool, powered by superfluid framework, to enable the easy adoption of conviction voting. 
 
@@ -13,14 +13,23 @@ npx hardhat test
 # Methodology
 Please find the detail here .....
 
+# Major Use Cases
+- Create Proposal: The application-authorised person can create project in a pool determined by (SuperApp's address, ISuperHookableToken's address). All projects in the same pool share the voting powers from users.
+
+- Vote Proposal: User can vote a project with a certain percentage of his/her voting power. E.g. he/she votes a project with 50% of his/her voting power. The actual amount of voting power towards the project will be automatically reflected when there is any change of his/her token amount.
+
+- Manually Refresh Proposal's Status: Manually trigger on-chain calculation and set the Proposal Status.
+
 # Components
-- ConvictionAgreement: This implements the core logic which handles the conviction calaution, proposal creation, user voting, and the changes of proposal's status. Execution of proposal is not included, and depends on DAO's application.
+- ConvictionAgreement: It implements the core logic which handles the conviction calculation, proposal creation, user voting, and the changes of proposal's status. Execution of a proposal is not included here, and we leave it to the application.
 
 
-- SuperHookableToken and HookManager: Used to observe any trnsfer/mint/burn/agremment update of the token in order to the conviction state accordingly.
+- SuperHookableToken and HookManager: To observe any transfer/mint/burn/agreement update of the token in order to update the conviction state accordingly.
 
-- ConvictionApp: Example SuperApp which use ConvictionAgreement.
+- ConvictionApp: An example application which uses ConvictionAgreement. As the main voting logic is implemented in the agreement, the DAO application can focus on the execution, the content of proposal (e.g. string/code), etc.
 
 
 # Future works
-e.g. Optimate gas fee
+- More test cases
+- Optimize gas fee
+

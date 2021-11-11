@@ -41,6 +41,17 @@ abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
         uint256 proposalId;
     }
 
+    struct CalculationInput {
+        uint256 lastTimeStamp;
+        uint256 lastConviction;
+        uint256 amount; //scaled token amount
+        int256 flowRate; //scaled, per step instead of second
+        uint256 alpha;
+        uint256 numSecondPerStep;
+        ProposalStatus status;
+        uint256 requiredConviction;
+    }
+
     /// @dev ISuperAgreement.agreementType implementation
     function agreementType() external view override returns (bytes32) {
         return keccak256("hackathon.ConvictionAgreement.v1");
@@ -56,7 +67,6 @@ abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
         bytes calldata ctx
     ) external virtual returns (bytes memory newCtx);
 
-    // onlyActiveProposal(app, token, proposalId)
     function vote(
         ISuperHookableToken token,
         address app,
@@ -116,6 +126,18 @@ abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
         address app,
         uint256 proposalId
     ) public view virtual returns (ProposalData memory);
+
+    ///@dev return the latest conviction when the proposal is active;
+    ///     Takes local maximum into account;
+    ///     If insolvent, return (0,0)
+    function getLatestActiveConviction(
+        CalculationInput memory input,
+        uint256 numStep
+    )
+        public
+        view
+        virtual
+        returns (uint256 latestConviction, uint256 latestTimeStamp);
 
     function calculateConviction(
         uint256 numStep,

@@ -120,7 +120,6 @@ contract ConvictionApp is Ownable, SuperAppBase {
         require(agreementClass == address(_agreement), "Unsupported agreement");
         require(address(_token) == address(superToken), "Unsupported token");
         address user = _getMsgSender(superToken, ctx);
-        console.log("Before Updated user is:", user);
         return new bytes(0);
     }
 

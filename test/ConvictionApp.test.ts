@@ -1,9 +1,7 @@
 import { expect } from "chai";
 import hre, { deployments, waffle, ethers, web3 } from "hardhat";
 import "@nomiclabs/hardhat-ethers";
-import { BigNumberish, Contract, Wallet } from "ethers/lib/ethers";
-import { resourceLimits } from "worker_threads";
-import { ConstantFlowAgreementV1, ConvictionAgreementV1, ConvictionApp, SuperAppBase, SuperfluidToken, SuperHookableToken, SuperHookManager, TestApp } from "../typechain";
+import { SuperHookableToken, SuperHookManager } from "../typechain";
 const deployFramework = require("@superfluid-finance/ethereum-contracts/scripts/deploy-framework.js");
 
 const SuperfluidSDK = require("@superfluid-finance/js-sdk");
@@ -202,13 +200,14 @@ describe("ConvictionAgreementV1", async () => {
                 ),
                 "0x");
 
+            await ethers.provider.send('evm_increaseTime', [10]);
             await sf.host.connect(user2).callAgreement(agreementProxy.address,
                 agreementProxy.interface.encodeFunctionData(
                     "vote",
                     [superHookableToken.address, convictionApp.address, 0, 1 * D, "0x"]
                 ), "0x");
 
-            await ethers.provider.send('evm_increaseTime', [600]);
+            await ethers.provider.send('evm_increaseTime', [190]);
             await ethers.provider.send('evm_mine', []);
 
 
@@ -265,14 +264,14 @@ describe("ConvictionAgreementV1", async () => {
                         , content, "0x"]
                 ),
                 "0x");
-
+            await ethers.provider.send('evm_increaseTime', [10]);
             await sf.host.connect(user2).callAgreement(agreementProxy.address,
                 agreementProxy.interface.encodeFunctionData(
                     "vote",
                     [superHookableToken.address, convictionApp.address, 0, 1 * D, "0x"]
                 ), "0x");
 
-            await ethers.provider.send('evm_increaseTime', [600]);
+            await ethers.provider.send('evm_increaseTime', [590]);
             await ethers.provider.send('evm_mine', []);
 
 
@@ -301,84 +300,3 @@ const createErrorHandler = () => {
 
 };
 
-
-const calConviction = (n: number, y_0: number, x_0: number, flowRate: number, alpha: number) => {
-    let result = y_0;
-
-    for (let i = 1; i < n + 1; i++) {
-        result = result * alpha + x_0 + i * flowRate;
-    }
-    return result;
-
-}
-
-
-const assertConvictionCorrect = async (
-    agreementProxy: ConvictionAgreementV1,
-    superHookableToken: SuperHookableToken,
-    convictionApp: TestApp,
-    proposalId: number,
-    n: number, y_0: number, x_0: number, flowRate: number, alpha: number,
-    correctNumDecimal = 3) => {
-
-    const conviction = await agreementProxy.getProposalLastConviction(superHookableToken.address,
-        convictionApp.address,
-        proposalId
-    );
-
-    // console.log("online Conviction", conviction.toString());
-
-    // console.log(n)
-    // console.log(y_0)
-    // console.log(x_0)
-    // console.log(flowRate)
-    // console.log(alpha)
-    const res = calConviction(n, y_0, x_0, flowRate, alpha);
-
-    const resInt = ethers.BigNumber.from(Math.floor(res * 10 ** correctNumDecimal));
-    expect(conviction.div(10 ** (7 - correctNumDecimal)).toString()).to.equal(resInt.toString());
-
-}
-
-
-const createFlow = async (sf: any,
-    superHookableToken: SuperHookableToken,
-    from: Wallet, to: Wallet, flowRate: BigNumberish) => {
-
-    const IConstantFlowAgreementV1 = await sf.contracts['IConstantFlowAgreementV1'];
-    const cfa = new Contract(sf.cfa._cfa.address, IConstantFlowAgreementV1.abi, ethers.provider);
-
-    await sf.host.connect(from).callAgreement(cfa.address,
-        cfa.interface.encodeFunctionData(
-            "createFlow",
-            [superHookableToken.address, to.address, flowRate, "0x"]
-        ), "0x");
-
-}
-
-
-const createProposalAndVoteAndWait = async (sf: any,
-    agreementProxy: ConvictionAgreementV1,
-    superHookableToken: SuperHookableToken,
-    convictionApp: TestApp,
-    proposalParam: any,
-    D: number,
-    user: Wallet) => {
-
-    await sf.host.callAgreement(agreementProxy.address,
-        agreementProxy.interface.encodeFunctionData(
-            "createProposal",
-            [superHookableToken.address, convictionApp.address, proposalParam, ethers.utils.toUtf8Bytes("hello"), "0x"]
-        ),
-        "0x");
-
-    await sf.host.connect(user).callAgreement(agreementProxy.address,
-        agreementProxy.interface.encodeFunctionData(
-            "vote",
-            [superHookableToken.address, convictionApp.address, 0, 1 * D, "0x"]
-        ), "0x");
-
-
-    await ethers.provider.send('evm_increaseTime', [600]);
-    await ethers.provider.send('evm_mine', []);
-}
