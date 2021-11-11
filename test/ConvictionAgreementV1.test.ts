@@ -612,6 +612,10 @@ describe("ConvictionAgreementV1", async () => {
         0,
         user2.address)).to.closeTo(ethers.BigNumber.from(10).pow(3).mul(proposalParam.numSecondPerStep), 1);
 
+      expect((await agreementProxy.getProposal(superHookableToken.address,
+        convictionApp.address,
+        0,
+      )).flowRate).to.equal(0.0001 * proposalParam.numSecondPerStep * D);
 
       await assertConvictionCorrect(agreementProxy, superHookableToken, convictionApp,
         0, 10, 0, 1, 0, 0.9
@@ -634,6 +638,10 @@ describe("ConvictionAgreementV1", async () => {
         0,
         user2.address)).to.equal(0.5 * D);
 
+      expect((await agreementProxy.getProposal(superHookableToken.address,
+        convictionApp.address,
+        0,
+      )).amount).to.equal(0.5 * D);
 
       await assertConvictionCorrect(agreementProxy, superHookableToken, convictionApp,
         0, 10, 0, 1, 0, 0.9
@@ -656,6 +664,10 @@ describe("ConvictionAgreementV1", async () => {
         0,
         user2.address)).to.equal(2 * D);
 
+      expect((await agreementProxy.getProposal(superHookableToken.address,
+        convictionApp.address,
+        0,
+      )).amount).to.equal(2 * D);
 
       await assertConvictionCorrect(agreementProxy, superHookableToken, convictionApp,
         0, 10, 0, 1, 0, 0.9
@@ -679,6 +691,38 @@ describe("ConvictionAgreementV1", async () => {
         0,
         user2.address)).to.equal(0.5 * D);
 
+
+      await assertConvictionCorrect(agreementProxy, superHookableToken, convictionApp,
+        0, 10, 0, 1, 0, 0.9
+      );
+
+    });
+
+    it("can correctly Update Conviction (multiple people voting) when transfer ", async () => {
+      const { sf, superHookableToken, agreementProxy, convictionApp, D, proposalParam } = await setupTests();
+
+      await createProposalAndVoteAndWait(sf, agreementProxy, superHookableToken, convictionApp,
+        proposalParam, D, user2);
+
+      await ethers.provider.send('evm_increaseTime', [1]);
+      await sf.host.connect(user1).callAgreement(agreementProxy.address,
+        agreementProxy.interface.encodeFunctionData(
+          "vote",
+          [superHookableToken.address, convictionApp.address, 0, 1 * D, "0x"]
+        ), "0x");
+
+      await ethers.provider.send('evm_increaseTime', [1]);
+      await superHookableToken.connect(user2).transfer(user3.address, ethers.utils.parseEther("0.5"));
+
+      expect(await agreementProxy.getUserVoteAmount(superHookableToken.address,
+        convictionApp.address,
+        0,
+        user2.address)).to.equal(0.5 * D);
+
+      expect((await agreementProxy.getProposal(superHookableToken.address,
+        convictionApp.address,
+        0,
+      )).amount).to.equal(1.5 * D);
 
       await assertConvictionCorrect(agreementProxy, superHookableToken, convictionApp,
         0, 10, 0, 1, 0, 0.9

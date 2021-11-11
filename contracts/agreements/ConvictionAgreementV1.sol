@@ -18,16 +18,12 @@ contract ConvictionAgreementV1 is IConvictionAgreementV1 {
     using SafeMath for uint256;
     using SignedSafeMath for int256;
 
-    uint256 private constant DECIMAL_MULTIPLIER = 10000000; //demicals for conviction/param
-
     bytes32 public constant CONSTANT_FLOW_V1 =
         keccak256("org.superfluid-finance.agreements.ConstantFlowAgreement.v1");
 
     ISuperHookManager _hookManager;
 
     constructor() {}
-
-    /// insolvent when contribution amount < 0
 
     struct UserTokenVoteData {
         address user;

@@ -12,6 +12,8 @@ abstract contract IConvictionAgreementV1 is AgreementBase, ITokenObserver {
     bytes public constant AGREEMENT_UPDATE_VOTING =
         abi.encodePacked("AGREEMENT_UPDATE_VOTING");
 
+    uint256 public constant DECIMAL_MULTIPLIER = 10000000; //demicals for conviction/param
+
     struct ProposalParam {
         uint256 alpha;
         uint256 requiredConviction;
