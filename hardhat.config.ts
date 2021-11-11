@@ -9,9 +9,12 @@ import "@nomiclabs/hardhat-truffle5";
 
 import "hardhat-gas-reporter";
 import "solidity-coverage";
+import { HttpNetworkUserConfig } from "hardhat/types";
+import "./scripts/tasks/deploy_all.ts"
+
 
 dotenv.config();
-
+const { INFURA_KEY, MNEMONIC } = process.env;
 // This is a sample Hardhat task. To learn how to create your own go to
 // https://hardhat.org/guides/create-task.html
 task("accounts", "Prints the list of accounts", async (taskArgs, hre) => {
@@ -21,6 +24,11 @@ task("accounts", "Prints the list of accounts", async (taskArgs, hre) => {
     console.log(account.address);
   }
 });
+
+const sharedNetworkConfig: HttpNetworkUserConfig = {}
+sharedNetworkConfig.accounts = {
+  mnemonic: MNEMONIC || "none",
+};
 
 // You need to export an object to set up your config
 // Go to https://hardhat.org/config/ to learn more
@@ -35,6 +43,9 @@ const config: HardhatUserConfig = {
       },
     },
   },
+  namedAccounts: {
+    deployer: 0,
+  },
   defaultNetwork: "hardhat",
   networks: {
     hardhat: {
@@ -43,6 +54,10 @@ const config: HardhatUserConfig = {
       url: process.env.ROPSTEN_URL || "",
       accounts:
         process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
+    },
+    goerli: {
+      ...sharedNetworkConfig,
+      url: `https://goerli.infura.io/v3/${INFURA_KEY}`,
     },
   },
   gasReporter: {
@@ -55,6 +70,7 @@ const config: HardhatUserConfig = {
   mocha: {
     timeout: 50000
   }
+
 };
 
 export default config;
