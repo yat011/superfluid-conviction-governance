@@ -11,7 +11,9 @@ npx hardhat test
 ```
 
 # Methodology
-Please find the detail here .....
+Please find the detail here
+
+https://medium.com/@yat192002/superfluid-conviction-voting-tool-hackathon-a37df3c6f8ab
 
 # Major Use Cases
 - Create Proposal: The application-authorised person can create project in a pool determined by (SuperApp's address, ISuperHookableToken's address). All projects in the same pool share the voting powers from users.
