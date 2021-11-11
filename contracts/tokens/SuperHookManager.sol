@@ -1,25 +1,32 @@
 pragma solidity 0.7.6;
 
 import {ISuperHookManager, ITokenObserver} from "../interfaces/tokens/ISuperHookManager.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-contract SuperHookManager is ISuperHookManager {
+contract SuperHookManager is ISuperHookManager, Ownable {
     mapping(address => ITokenObserver[]) public agreementHooks;
     mapping(address => ITokenObserver[]) public agreementStateHooks;
     ITokenObserver[] public balanceHooks;
 
+    constructor() {
+        transferOwnership(msg.sender);
+    }
+
     function registerAgreementHook(ITokenObserver observer, address sender)
         external
+        onlyOwner
     {
         agreementHooks[sender].push(observer);
     }
 
     function registerAgreemenStateHook(ITokenObserver observer, address sender)
         external
+        onlyOwner
     {
         agreementStateHooks[sender].push(observer);
     }
 
-    function registerBalanceHook(ITokenObserver observer) external {
+    function registerBalanceHook(ITokenObserver observer) external onlyOwner {
         balanceHooks.push(observer);
     }
 
